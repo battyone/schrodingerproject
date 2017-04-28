@@ -1,16 +1,21 @@
 """ 
-@Author: Robert Brown
+@Author: Robert Brown, Changkai Zhang
 This program solves the Schrodinger equation for given inital conditions using the finite difference method.
-This uses Euler
+This uses Crank-Nicholson
 ∂u/∂t = ∂²u/∂x²
-with bcs: u(0) = u(x_max) = 0
 """
 
 import numpy
 from scipy.integrate import simps
+from scipy.linalg import fractional_matrix_power
+import solve
+
+def _test(x, n=5):
+    # test initial for testing qm.py
+    return numpy.sqrt(2) * numpy.sin(n*x*numpy.pi)
 
 
-def prob(psi: int) -> numpy.ndarray:
+def prob(psi):
     # returns the probability density of an wavefunction array
     return numpy.power(psi.real, 2) + numpy.power(psi.imag, 2)
 
@@ -39,10 +44,9 @@ class Wavefunction:
                  boundaries=(0+0j,0+0j),
                  exact = None,
                  periodic = False,
-                 smooth = False
-                    ):
+                 eigenvalue = None
+                 ):
         # class initializer
-        print("start")
         self.dx = dx
         self.dx2 = dx ** 2
         self.dt = dt
@@ -51,17 +55,18 @@ class Wavefunction:
         self.nt = int(round((trange[1] - trange[0])/(dt))) + 1  # number of time steps
         self.trange = trange
         self.xrange = xrange
-        self.I = numpy.empty(self.nt)
-        self.psi  = numpy.empty([self.nt, self.nx], dtype=complex) # holds wavefunction for all times
-        self.prob = numpy.empty([self.nt, self.nx], dtype=float)   # holds probability density function for all times
+        self.I = numpy.empty(self.nt) # <psi|psi>
+        self.e = numpy.empty(self.nt) # error
+        self.psi  = numpy.empty([self.nt, self.nx], dtype=numpy.complex128) # holds wavefunction for all times
+        self.prob = numpy.empty([self.nt, self.nx], dtype=numpy.float)   # holds probability density function for all times
         self.shape = self.psi.shape            # shape of wavefunction array
         self.x = numpy.linspace(xrange[0], xrange[1], self.nx)
         self.t = numpy.linspace(trange[0], trange[1], self.nt)
         self.psi[0] = initial(self.x) # generate the initial wavefunction
         self.periodic = periodic      # periodic boundary condition
+        self.eigenvalue = eigenvalue
         self.order = order            # central difference order
         self.boundaries = boundaries
-        print("finish")
 
         if potential is not None:
             self.potential = potential(self.x)
@@ -72,13 +77,9 @@ class Wavefunction:
             self.potential = None
             
         if self.boundaries is not None and not self.periodic:
-            print("setting bcs")
             self._setbcs(0)
         if exact is not None:
             self.deriv = exact
-
-    def __getitem__(self, key):
-        return self.real[key] + 1j * self.imag[key]
 
     def _setbcs(self, key):
         # make wavefunction satisfy BCs
@@ -86,36 +87,64 @@ class Wavefunction:
             self.psi[key, 0]  = self.boundaries[0]
             self.psi[key, -1] = self.boundaries[1]
 
+    def exact_solve(self):
+        # used for solving stationary states exactly to determine error in the numeric solution
+        self.exact_psi = numpy.array([numpy.exp(1j * self.eigenvalue * time) * self.psi[0] for time in self.t])
+        self.exact_prob = prob(self.exact_psi)
+        self.exact_I = simps(self.exact_psi, dx=self.dx)
 
     def solve(self):
         #set up triadiagonal matrix
         if self.order==2:
-            A = tridiagonal([-self.mu, 1 - 2 * self.mu, -self.mu], self.nx)
+            # print("order 2")
+            A = tridiagonal([self.mu, 1 - 2 * self.mu, self.mu], self.nx)
         if self.order==4:
+            # print("order 4")
             A = pentdiagonal([-self.mu/12, 4*self.mu/3, 1 - 5*self.mu/2, 4*self.mu/3, -self.mu/12], self.nx)
         
         if self.periodic:
             # set periodic BCs
             if self.order==2:
-                print("periodic!")
+                # print("periodic!")
                 A[-1, 0] = self.mu
                 A[ 0,-1] = self.mu
                 
             if self.order ==4:
-                print("periodic!")
-                A[-1,0], A[0,-1] = -4*self.mu/3,  -4*self.mu/3
-                A[-2,0], A[0,-2] = -1*self.mu/12, -1*self.mu/12
-        
-        if self.potential is not None:
-            A = A + numpy.diag(self.potential)
-        else:
-            print("no potential!")
-        B = numpy.conjugate(A)
-        for i in range(self.nt-1):
-            # crank-nicholson algorithm
-            self._setbcs(i)
-            self.psi[i+1] = numpy.linalg.solve(A,numpy.dot(B,self.psi[i]))
-            self.I[i] = simps(prob(self.psi[i]), dx=self.dx)
+                # print("periodic!")
+                A[0,-1], A[0,-2] =  4*self.mu/3, -self.mu/12
+                A[-1,0], A[-1, 1] = 4*self.mu/3, -self.mu/12
+                # A[-1, 0], A[-1, 1] = self.mu, 2*self.mu
 
-        # calculate probability density
-        self.prob=prob(self.psi)
+        else:
+            # set dirichlet BCs
+            A[0,   1] = 0
+            A[-1, -2] = 0
+
+        if self.potential is not None:
+            A = A + self.mu * numpy.diag(self.potential)
+
+        # print(numpy.around(10000* numpy.imag(A)))
+        # B = numpy.conjugate(A)
+
+        if ( numpy.all(self.potential == 0) or self.potential is None ) and self.order > 2:
+            # enable optimization for free potential for high enough order derivative
+            # print("zero potential!")
+            B = fractional_matrix_power(A, numpy.e)
+            C = numpy.linalg.inv(B)
+        else:
+            B = numpy.conj(A)
+            C = numpy.dot(numpy.linalg.inv(A),B)
+        
+        """
+        for i in range(self.nt - 1):
+            self.psi[i + 1] = numpy.dot(C, self.psi[i])
+        """
+        
+        self.psi  = solve.solve(self.psi, C, self.nt)  # solve wavefunction for all time
+        self.prob = prob(self.psi)                       # calculate the probability density
+        self.I    = simps( self.prob, dx=self.dx)        # calculate the integrated probability density
+
+        if self.eigenvalue is not None:
+            self.e = simps( numpy.power(self.prob - self.exact_prob, 2), dx=self.dx)  # calculate the error in the solution
+
+        # print("finished solving {} points for {} time instances".format(self.nx, self.nt))
