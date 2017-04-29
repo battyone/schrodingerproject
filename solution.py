@@ -11,76 +11,49 @@ import qm
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-
+import potential
 
 def initial(x):
-    # return np.sqrt(2)*np.exp(5j*x*np.pi)
-    # return np.sqrt(2) * np.sin(3*x*np.pi)
-    return np.pi * np.exp(-np.power(x - 0.5, 2)/0.1**2 )
+    return np.sqrt(2)*np.exp((3j*2*np.pi/2.02)*x)
+    # return np.sqrt(2) * np.sin(5*x*np.pi/2.02) # + np.sin(3*x*np.pi))
+    # return 0.2 * np.exp(-np.power(x, 2)/0.1**2)  # approximate stationary state for harmonic potential
+    # return 2 * np.exp(-np.power(x+2, 2) / 0.1 ** 2)  * np.exp(-4j*x*2*np.pi/1.02)
+    # return np.exp(-x**2/0.01)
 
-def potential(x, k=1):
-    # harmonic potential
-    return 0.5 * k * np.power(x, 2)
+from cycler import cycler
+color_c = cycler('color', ['k'])
+style_c = cycler('linestyle', ['-', '--', ':', '-.'])
+markr_c = cycler('marker', [''])
+c_cms = color_c * markr_c * style_c
+c_csm = color_c * style_c * markr_c
 
-t_int = 0.00001
-save = False
+plt.rc('text', usetex=True)
+plt.rc('axes', prop_cycle=c_cms)
+plt.rc('font', family='serif')
+fig = plt.figure()
+ax = fig.add_subplot(111)
 
-foo = qm.Wavefunction(initial, dt=t_int, trange=(0,1), order=4, boundaries=(0,0))
-f = input()
-foo.solve()
+lines = []
+for delta_t in (0.002,0.001,0.0005,0.00001):
+    foo = qm.Wavefunction(initial,
+                          dt=delta_t,
+                          xrange=(-1,1),
+                          trange=(0,.2),
+                          order=2,
+                          periodic=True,
+                          # eigenvalue= -(5*np.pi/2.02)**2,
+                          eigenvalue= (3j * 2 * np.pi / 2.02)**2,
+                          potential=potential.free
+                          )
 
-# Plot the results
-fig, ax = plt.subplots(3)
-time = ax[0].text(.7, .5, '', fontsize=15)
-line1, = ax[0].plot([], [], linewidth=3, color='b')
-line2, = ax[0].plot([], [], linewidth=3, color='r')
-line3, = ax[1].plot([], [], linewidth=1, color='k')
-line4, = ax[2].plot([], [], linewidth=1, color='k')
+    foo.exact_solve()
+    foo.solve()
+    e = foo.psi - foo.exact_psi
+    E = np.amax(np.abs(e), axis=1)
+    lines.append(ax.plot(foo.t, E, label="{}".format(delta_t))[0])
 
-# wavefunction
-ax[0].set_xlabel("Position, $x$")
-ax[0].set_ylabel("Wavefunction,  $\\Psi(x, t)$")
-ax[0].set_ylim([-.8,.8])
-ax[0].set_ylim([-2,2])
-ax[0].set_xlim([0,1])
-
-# probability density function
-ax[1].set_xlabel("Position, $x$")
-ax[1].set_ylabel("Probability density,  $|\\Psi(x, t)|^2$")
-ax[1].set_ylim([-.8,.8])
-ax[1].set_ylim([0,6])
-ax[1].set_xlim([0,1])
-
-# integral over space
-ax[2].set_xlabel("Time, $t$")
-ax[2].set_ylabel("$\\langle \\Psi | \\Psi \\rangle$")
-ax[2].set_xlim(foo.trange)
-ax[2].set_ylim([0,1.5])
-
-def init():
-    line1.set_data(foo.x,foo.psi[0].real)
-    line2.set_data(foo.x,foo.psi[0].imag)
-    line3.set_data(foo.x,foo.prob[0])
-    line4.set_data(foo.t[0],foo.I[0])    
-    time.set_text('')
-    return line1, line2, line3, line4, time
-
-def animate(i):
-    line1.set_ydata(foo.psi[i].real)  # update the data
-    line2.set_ydata(foo.psi[i].imag) 
-    line3.set_data(foo.x,foo.prob[i])
-    line4.set_data(foo.t[:i],foo.I[:i])    
-    time.set_text("t = {0:.4f}".format(t_int*i))
-    return line1, line2, line3, line4, time
-
-nstart = int(round((0.015/t_int)))
-
-ani = animation.FuncAnimation(fig,
-                              animate,
-                              np.arange(0, foo.nt,5),
-                              interval=20, 
-                              blit=True, 
-                              init_func=init)
-if save:
-    ani.save("instability.mp4", writer="ffmpeg", codec='libx264', bitrate=-1, fps=24)
+ax.set_xlim([0,0.2])
+plt.legend(handles=lines, title=r'$\Delta t$')
+plt.ylabel(r'Maximum error $E_n $')
+plt.xlabel(r'Time elapsed, $t_n$')
 plt.show()
