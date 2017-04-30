@@ -13,6 +13,9 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import potential
 
+from time import perf_counter
+
+
 def initial(x):
     return np.sqrt(2)*np.exp((3j*2*np.pi/2.02)*x)
     # return np.sqrt(2) * np.sin(5*x*np.pi/2.02) # + np.sin(3*x*np.pi))
@@ -47,10 +50,16 @@ for delta_t in (0.002,0.001,0.0005,0.00001):
                           )
 
     foo.exact_solve()
+    start = perf_counter()
     foo.solve()
+    end = perf_counter()
     e = foo.psi - foo.exact_psi
     E = np.amax(np.abs(e), axis=1)
     lines.append(ax.plot(foo.t, E, label="{}".format(delta_t))[0])
+
+    # ...
+
+    print(end - start)
 
 ax.set_xlim([0,0.2])
 plt.legend(handles=lines, title=r'$\Delta t$')
